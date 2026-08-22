@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Oliveszn/Schema-Watch/internal/config"
 	"github.com/Oliveszn/Schema-Watch/internal/schema"
 	"github.com/Oliveszn/Schema-Watch/internal/store"
 )
@@ -19,9 +20,10 @@ type Proxy struct {
 	rp     *httputil.ReverseProxy
 	store  *store.Store
 	onDiff OnDiff
+	cfg    *config.Config
 }
 
-func New(targetURL string, st *store.Store, onDiff OnDiff) (*Proxy, error) {
+func New(targetURL string, st *store.Store, onDiff OnDiff, cfg *config.Config) (*Proxy, error) {
 	target, err := url.Parse(targetURL)
 	if err != nil {
 		return nil, err
@@ -31,6 +33,7 @@ func New(targetURL string, st *store.Store, onDiff OnDiff) (*Proxy, error) {
 		target: target,
 		store:  st,
 		onDiff: onDiff,
+		cfg:    cfg,
 	}
 
 	rp := httputil.NewSingleHostReverseProxy(target)
@@ -49,6 +52,11 @@ func (p *Proxy) captureResponse(resp *http.Response) error {
 		return nil
 	}
 
+	endpoint := endpointKey(resp.Request)
+	if p.cfg.IsEndpointIgnored(endpoint) {
+		return nil
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return err
@@ -60,8 +68,8 @@ func (p *Proxy) captureResponse(resp *http.Response) error {
 	if err != nil {
 		return nil
 	}
+	sch = p.cfg.FilterSchema(sch)
 
-	endpoint := endpointKey(resp.Request)
 	diff := p.store.CheckAndUpdate(endpoint, sch)
 	if diff != nil && p.onDiff != nil {
 		p.onDiff(diff)

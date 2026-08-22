@@ -7,6 +7,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/Oliveszn/Schema-Watch/internal/config"
 	"github.com/Oliveszn/Schema-Watch/internal/schema"
 	"github.com/Oliveszn/Schema-Watch/internal/store"
 )
@@ -19,7 +20,7 @@ func TestProxy_ForwardsResponseUnchanged(t *testing.T) {
 	defer backend.Close()
 
 	st := store.New()
-	p, err := New(backend.URL, st, nil)
+	p, err := New(backend.URL, st, nil, nil)
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestProxy_RecordsBaselineOnFirstRequest(t *testing.T) {
 	defer backend.Close()
 
 	st := store.New()
-	p, err := New(backend.URL, st, nil)
+	p, err := New(backend.URL, st, nil, nil)
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -77,7 +78,7 @@ func TestProxy_FiresOnDiffWhenSchemaChanges(t *testing.T) {
 		gotDiff = d
 	}
 
-	p, err := New(backend.URL, st, onDiff)
+	p, err := New(backend.URL, st, onDiff, nil)
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -113,7 +114,7 @@ func TestProxy_SkipsNonJSONResponses(t *testing.T) {
 	defer backend.Close()
 
 	st := store.New()
-	p, err := New(backend.URL, st, nil)
+	p, err := New(backend.URL, st, nil, nil)
 	if err != nil {
 		t.Fatalf("New returned error: %v", err)
 	}
@@ -127,5 +128,73 @@ func TestProxy_SkipsNonJSONResponses(t *testing.T) {
 	}
 	if _, ok := st.CurrentSchema("GET /page"); ok {
 		t.Fatal("expected non-JSON response to be skipped, not recorded in store")
+	}
+}
+
+func TestProxy_SkipsIgnoredEndpoints(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer backend.Close()
+
+	st := store.New()
+	cfg := &config.Config{IgnoreEndpoints: []string{"GET /health"}}
+	p, err := New(backend.URL, st, nil, cfg)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	p.Handler().ServeHTTP(rec, req)
+
+	if rec.Body.String() != `{"status":"ok"}` {
+		t.Fatalf("expected ignored endpoint to still be forwarded, got %q", rec.Body.String())
+	}
+	if _, ok := st.CurrentSchema("GET /health"); ok {
+		t.Fatal("expected ignored endpoint to be skipped, not recorded in store")
+	}
+}
+
+func TestProxy_FiltersIgnoredFieldsBeforeDiffing(t *testing.T) {
+	var bodyToReturn string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(bodyToReturn))
+	}))
+	defer backend.Close()
+
+	st := store.New()
+	cfg := &config.Config{IgnoreFields: []string{"updated_at"}}
+
+	var mu sync.Mutex
+	var gotDiff *schema.Diff
+	onDiff := func(d *schema.Diff) {
+		mu.Lock()
+		defer mu.Unlock()
+		gotDiff = d
+	}
+
+	p, err := New(backend.URL, st, onDiff, cfg)
+	if err != nil {
+		t.Fatalf("New returned error: %v", err)
+	}
+
+	bodyToReturn = `{"id":1,"updated_at":"2026-01-01"}`
+	p.Handler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/1", nil))
+
+	bodyToReturn = `{"id":1,"updated_at":"2026-06-15"}`
+	p.Handler().ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/users/1", nil))
+
+	mu.Lock()
+	defer mu.Unlock()
+	if gotDiff != nil {
+		t.Fatalf("expected no diff when only an ignored field's value changed, got %+v", gotDiff)
+	}
+
+	sch, _ := st.CurrentSchema("GET /users/1")
+	if _, present := sch["updated_at"]; present {
+		t.Fatalf("expected updated_at to be filtered out of the stored schema, got %+v", sch)
 	}
 }

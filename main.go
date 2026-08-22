@@ -1,57 +1,65 @@
 package main
 
 import (
+	"errors"
 	"flag"
-	"fmt"
 	"log"
+	"os"
 
+	"github.com/Oliveszn/Schema-Watch/internal/alert"
+	"github.com/Oliveszn/Schema-Watch/internal/config"
+	"github.com/Oliveszn/Schema-Watch/internal/dashboard"
 	"github.com/Oliveszn/Schema-Watch/internal/proxy"
-	"github.com/Oliveszn/Schema-Watch/internal/schema"
 	"github.com/Oliveszn/Schema-Watch/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
-	target := flag.String("target", "http://localhost:8080", "backend URL to proxy requests to")
-	port := flag.String("port", "9090", "port for schema-watch to listen on")
+	target := flag.String("target", "", "backend URL to proxy requests to (overrides config.yaml)")
+	port := flag.String("port", "", "port for schema-watch to listen on (overrides config.yaml)")
+	configPath := flag.String("config", "config.yaml", "path to config file (optional)")
 	flag.Parse()
 
-	st := store.New()
-
-	onDiff := func(d *schema.Diff) {
-		printDiff(d)
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			log.Printf("no config file found at %s, using flags/defaults only", *configPath)
+			cfg = &config.Config{}
+		} else {
+			log.Fatalf("failed to load config: %v", err)
+		}
 	}
 
-	p, err := proxy.New(*target, st, onDiff)
+	targetURL := firstNonEmpty(*target, cfg.Target, "http://localhost:8080")
+	listenPort := firstNonEmpty(*port, cfg.Port, "9090")
+
+	st := store.New()
+	console := alert.NewConsole()
+
+	p, err := proxy.New(targetURL, st, console.Alert, cfg)
 	if err != nil {
 		log.Fatalf("failed to set up proxy: %v", err)
 	}
 
 	r := gin.Default()
+
+	dashboard.New(st).RegisterRoutes(r)
 	r.NoRoute(gin.WrapH(p.Handler()))
 
-	log.Printf("schema-watch listening on :%s, forwarding to %s", *port, *target)
-	log.Printf("point your frontend at http://localhost:%s instead of %s", *port, *target)
+	log.Printf("schema-watch listening on :%s, forwarding to %s", listenPort, targetURL)
+	log.Printf("point your frontend at http://localhost:%s instead of %s", listenPort, targetURL)
+	log.Printf("dashboard: http://localhost:%s/__schema-watch/dashboard", listenPort)
 
-	if err := r.Run(":" + *port); err != nil {
+	if err := r.Run(":" + listenPort); err != nil {
 		log.Fatalf("server failed: %v", err)
 	}
 }
 
-func printDiff(d *schema.Diff) {
-	label := "CHANGE"
-	if d.Breaking {
-		label = "BREAKING CHANGE"
-	}
-	fmt.Printf("\n[schema-watch] %s on %s\n", label, d.Endpoint)
-	for _, c := range d.Changes {
-		switch c.Type {
-		case schema.FieldAdded:
-			fmt.Printf("  + %s added (%s)\n", c.Path, c.NewType)
-		case schema.FieldRemoved:
-			fmt.Printf("  - %s removed (was %s)\n", c.Path, c.OldType)
-		case schema.FieldTypeChanged:
-			fmt.Printf("  ~ %s changed type: %s -> %s\n", c.Path, c.OldType, c.NewType)
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if v != "" {
+			return v
 		}
 	}
+	return ""
 }

@@ -9,16 +9,16 @@ const (
 )
 
 type Change struct {
-	Path    string
-	Type    ChangeType
-	OldType FieldType
-	NewType FieldType
+	Path    string     `json:"path"`
+	Type    ChangeType `json:"type"`
+	OldType FieldType  `json:"old_type,omitempty"`
+	NewType FieldType  `json:"new_type,omitempty"`
 }
 
 type Diff struct {
-	Endpoint string
-	Changes  []Change
-	Breaking bool
+	Endpoint string   `json:"endpoint"`
+	Changes  []Change `json:"changes"`
+	Breaking bool     `json:"breaking"`
 }
 
 func Compare(old, new Schema) []Change {
