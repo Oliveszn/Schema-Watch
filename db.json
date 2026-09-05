@@ -1,3 +1,5 @@
 {
-  "users": [{ "id": 1, "email": "a@b.com", "school": 5 }]
+  "users": [
+    { "id": 1, "email": "a@b.com", "school": "5", "updated_at": "2026-01-01" }
+  ]
 }

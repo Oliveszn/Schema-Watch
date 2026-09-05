@@ -1,22 +1,16 @@
-# schema-watch configuration
 # Every field here is optional — CLI flags (--target, --port) override
 # whatever is set here, and built-in defaults apply if both are absent.
 
 target: "http://localhost:8080" # backend to proxy requests to
-port: "9090" # port schema-watch listens on
+port: "9090"
 
-# Field names to ignore during diffing. Matched against either the
-# full dot-path ("user.updated_at") or just the leaf name
-# ("updated_at"), so one entry covers a field at any nesting depth.
-# Good for fields that legitimately change value/type-ambiguity on
-# every request (timestamps, nullable fields) that would otherwise
-# spam you with false positives.
+# Field names to ignore during diffing
 ignore_fields:
   - updated_at
   - created_at
 
-# Endpoints to skip diffing entirely. Still proxied through normally —
-# just never watched. Supports a trailing "*" as a prefix wildcard.
+# Endpoints to skip diffing entirely
 ignore_endpoints:
   - "GET /health"
   - "GET /metrics*"
+  - GET /favicon.ico
